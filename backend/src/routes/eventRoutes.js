@@ -8,7 +8,8 @@ import {
   replacePlayerInMatch,
   startMatch,
   getAllEvents,
-  endMatch,
+  endMatch, 
+  regenerateMatch
 } from "../controllers/eventController.js";
 
 const router = express.Router();
@@ -26,5 +27,6 @@ router.post("/:eventId/generate-round", generateRound);
 router.patch("/:eventId/matches/:matchId/replace-player", replacePlayerInMatch);
 router.patch("/:eventId/matches/:matchId/start", startMatch);
 router.patch("/:eventId/matches/:matchId/end", endMatch);
+router.patch("/:eventId/matches/:matchId/regenerate", regenerateMatch);
 
 export default router;

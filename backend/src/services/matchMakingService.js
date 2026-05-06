@@ -8,10 +8,8 @@ function averageRating(players) {
   return players.reduce((sum, p) => sum + p.currentRating, 0) / players.length;
 }
 
-function averageGamesPlayed(players) {
-  return (
-    players.reduce((sum, p) => sum + (p.gamesPlayed || 0), 0) / players.length
-  );
+function totalGamesPlayed(players) {
+  return players.reduce((sum, p) => sum + (p.gamesPlayed || 0), 0);
 }
 
 function teamGenderType(team) {
@@ -38,8 +36,129 @@ function hasPlayedAgainstBefore(teamA, teamB) {
   );
 }
 
-function createTeams(players, avoidRepeats) {
-  const availablePlayers = shuffle(players).sort((a, b) => {
+function getAllTeamCombos(players) {
+  const teams = [];
+
+  for (let i = 0; i < players.length; i++) {
+    for (let j = i + 1; j < players.length; j++) {
+      teams.push([players[i], players[j]]);
+    }
+  }
+
+  return teams;
+}
+
+function playersOverlap(teamA, teamB) {
+  const ids = teamA.map((p) => p.id);
+  return teamB.some((p) => ids.includes(p.id));
+}
+
+function scoreMatch(teamA, teamB, event, strictGender = true) {
+  if (playersOverlap(teamA, teamB)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  if (strictGender && !isValidGenderMatch(teamA, teamB, event.genderBalanced)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const players = [...teamA, ...teamB];
+
+  const totalGames = totalGamesPlayed(players);
+  const teamRatingGap = Math.abs(averageRating(teamA) - averageRating(teamB));
+
+  const teamGamesGap = Math.abs(
+    totalGamesPlayed(teamA) - totalGamesPlayed(teamB)
+  );
+
+  const repeatPartnerCount =
+    (hasPartneredBefore(teamA[0], teamA[1]) ? 1 : 0) +
+    (hasPartneredBefore(teamB[0], teamB[1]) ? 1 : 0);
+
+  const repeatOpponent = hasPlayedAgainstBefore(teamA, teamB);
+
+  let score = 0;
+
+  // MAIN PRIORITY: use players with fewer total games.
+  score += totalGames * 100;
+
+  // Keep teams fair.
+  score += teamRatingGap * 15;
+
+  // Prefer teams where both sides have similar play count.
+  score += teamGamesGap * 8;
+
+  // Avoid repeat partners if enabled.
+  if (event.avoidRepeats) {
+    score += repeatPartnerCount * 50;
+  }
+
+  // Avoid repeat opponents if enabled.
+  if (event.avoidRepeats && repeatOpponent) {
+    score += 50;
+  }
+
+  // If gender balance is enabled but this is fallback mode, penalize invalid gender match.
+  if (
+    event.genderBalanced &&
+    !strictGender &&
+    !isValidGenderMatch(teamA, teamB, event.genderBalanced)
+  ) {
+    score += 40;
+  }
+
+  score += Math.random() * 2;
+
+  return score;
+}
+
+function findBestMatch(players, event, excludedPlayerIds = []) {
+  const availablePlayers = players.filter(
+    (player) => !excludedPlayerIds.includes(player.id)
+  );
+
+  if (availablePlayers.length < 4) return null;
+
+  const teams = getAllTeamCombos(availablePlayers);
+
+  let bestMatch = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  // Pass 1: strict gender rule.
+  teams.forEach((teamA) => {
+    teams.forEach((teamB) => {
+      const score = scoreMatch(teamA, teamB, event, true);
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestMatch = { teamA, teamB };
+      }
+    });
+  });
+
+  if (bestMatch) return bestMatch;
+
+  // Pass 2: fallback if gender rule makes matching impossible.
+  teams.forEach((teamA) => {
+    teams.forEach((teamB) => {
+      const score = scoreMatch(teamA, teamB, event, false);
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestMatch = { teamA, teamB };
+      }
+    });
+  });
+
+  return bestMatch;
+}
+
+export function createMatches(event, mode = "current") {
+  const eligiblePlayers = shuffle(
+    event.players.filter(
+      (player) => player.isAvailable && !player.isCurrentlyPlaying
+    )
+  ).sort((a, b) => {
     const gamesDiff = (a.gamesPlayed || 0) - (b.gamesPlayed || 0);
 
     if (gamesDiff !== 0) {
@@ -49,123 +168,23 @@ function createTeams(players, avoidRepeats) {
     return b.currentRating - a.currentRating;
   });
 
-  const teams = [];
-
-  while (availablePlayers.length >= 2) {
-    const playerA = availablePlayers.shift();
-
-    let bestPartnerIndex = 0;
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    availablePlayers.forEach((playerB, index) => {
-      const ratingGap = Math.abs(playerA.currentRating - playerB.currentRating);
-      const gamesGap = Math.abs(
-        (playerA.gamesPlayed || 0) - (playerB.gamesPlayed || 0)
-      );
-
-      const alreadyPartnered = playerA.history.partners.includes(playerB.id);
-
-      let score = 0;
-
-      // Prefer strong + weaker pairing for balanced team creation.
-      score -= ratingGap * 2;
-
-      // Prefer pairing players with similar number of games.
-      score += gamesGap * 3;
-
-      // Avoid repeat partners.
-      if (avoidRepeats && alreadyPartnered) {
-        score += 100;
-      }
-
-      // Small randomness.
-      score += Math.random() * 0.5;
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestPartnerIndex = index;
-      }
-    });
-
-    const partner = availablePlayers.splice(bestPartnerIndex, 1)[0];
-
-    teams.push([playerA, partner]);
-  }
-
-  return teams;
-}
-
-export function createMatches(event, mode = "current") {
-  const eligiblePlayers = event.players.filter(
-    (player) => player.isAvailable && !player.isCurrentlyPlaying
-  );
-
   const maxMatches = Math.min(
     event.courtsAvailable,
     Math.floor(eligiblePlayers.length / 4)
   );
 
-  const teams = createTeams(eligiblePlayers, event.avoidRepeats);
-
-  teams.sort((a, b) => {
-    const gamesDiff = averageGamesPlayed(a) - averageGamesPlayed(b);
-
-    if (gamesDiff !== 0) {
-      return gamesDiff;
-    }
-
-    return averageRating(b) - averageRating(a);
-  });
-
   const matches = [];
+  const usedPlayerIds = [];
 
-  while (teams.length >= 2 && matches.length < maxMatches) {
-    const teamA = teams.shift();
+  while (matches.length < maxMatches) {
+    const bestMatch = findBestMatch(eligiblePlayers, event, usedPlayerIds);
 
-    let opponentIndex = -1;
-    let bestOpponentScore = Number.POSITIVE_INFINITY;
+    if (!bestMatch) break;
 
-    teams.forEach((teamB, index) => {
-      const validGender = isValidGenderMatch(
-        teamA,
-        teamB,
-        event.genderBalanced
-      );
+    const { teamA, teamB } = bestMatch;
 
-      if (!validGender) return;
-
-      const teamRatingGap = Math.abs(averageRating(teamA) - averageRating(teamB));
-      const teamGamesGap = Math.abs(
-        averageGamesPlayed(teamA) - averageGamesPlayed(teamB)
-      );
-
-      const repeatOpponent = hasPlayedAgainstBefore(teamA, teamB);
-
-      let score = 0;
-
-      // Maintain balanced match strength.
-      score += teamRatingGap * 10;
-
-      // Prefer teams with similar games played.
-      score += teamGamesGap * 5;
-
-      // Avoid repeat opponents.
-      if (event.avoidRepeats && repeatOpponent) {
-        score += 100;
-      }
-
-      // Small randomness.
-      score += Math.random() * 0.5;
-
-      if (score < bestOpponentScore) {
-        bestOpponentScore = score;
-        opponentIndex = index;
-      }
-    });
-
-    if (opponentIndex === -1) continue;
-
-    const teamB = teams.splice(opponentIndex, 1)[0];
+    usedPlayerIds.push(...teamA.map((p) => p.id));
+    usedPlayerIds.push(...teamB.map((p) => p.id));
 
     matches.push({
       id: uuidv4(),
@@ -185,6 +204,49 @@ export function createMatches(event, mode = "current") {
   return matches;
 }
 
+export function regenerateSingleMatch(event, oldMatch) {
+  const mode = oldMatch.status === "queued" ? "queue" : "current";
+
+  const otherPendingMatchPlayerIds = event.matches
+    .filter(
+      (match) =>
+        match.id !== oldMatch.id &&
+        ["generated", "queued", "started"].includes(match.status)
+    )
+    .flatMap((match) => [...match.teamA, ...match.teamB].map((p) => p.id));
+
+  const eligiblePlayers = event.players.filter((player) => {
+    return (
+      player.isAvailable &&
+      !player.isCurrentlyPlaying &&
+      !otherPendingMatchPlayerIds.includes(player.id)
+    );
+  });
+
+  if (eligiblePlayers.length < 4) return null;
+
+  const temporaryEvent = {
+    ...event,
+    courtsAvailable: 1,
+    players: eligiblePlayers,
+  };
+
+  const matches = createMatches(temporaryEvent, mode);
+
+  if (matches.length === 0) return null;
+
+  const newMatch = matches[0];
+
+  return {
+    ...newMatch,
+    id: oldMatch.id,
+    courtNumber: oldMatch.courtNumber,
+    round: oldMatch.round,
+    status: oldMatch.status,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export function findReplacementPlayer(event, match, unavailablePlayerId) {
   const currentMatchPlayerIds = [...match.teamA, ...match.teamB].map(
     (player) => player.id
@@ -196,7 +258,7 @@ export function findReplacementPlayer(event, match, unavailablePlayerId) {
 
   if (!unavailablePlayer) return null;
 
-  const candidates = event.players.filter((player) => {
+  const baseCandidates = event.players.filter((player) => {
     return (
       player.id !== unavailablePlayerId &&
       !currentMatchPlayerIds.includes(player.id) &&
@@ -205,7 +267,23 @@ export function findReplacementPlayer(event, match, unavailablePlayerId) {
     );
   });
 
-  const validCandidates = candidates.filter((candidate) => {
+  if (baseCandidates.length === 0) return null;
+
+  const getCandidateScore = (candidate, strictGender = true) => {
+    const ratingDiff = Math.abs(
+      candidate.currentRating - unavailablePlayer.currentRating
+    );
+
+    const gamesPlayed = candidate.gamesPlayed || 0;
+
+    let score = 0;
+
+    // Prefer replacements who have played less.
+    score += gamesPlayed * 100;
+
+    // Then prefer similar rating.
+    score += ratingDiff * 10;
+
     const newTeamA = match.teamA.map((player) =>
       player.id === unavailablePlayerId ? candidate : player
     );
@@ -214,26 +292,37 @@ export function findReplacementPlayer(event, match, unavailablePlayerId) {
       player.id === unavailablePlayerId ? candidate : player
     );
 
-    return isValidGenderMatch(newTeamA, newTeamB, event.genderBalanced);
-  });
-
-  if (validCandidates.length === 0) return null;
-
-  validCandidates.sort((a, b) => {
-    const unavailableGames = unavailablePlayer.gamesPlayed || 0;
-
-    const gameDiffA = Math.abs((a.gamesPlayed || 0) - unavailableGames);
-    const gameDiffB = Math.abs((b.gamesPlayed || 0) - unavailableGames);
-
-    if (gameDiffA !== gameDiffB) {
-      return gameDiffA - gameDiffB;
+    if (
+      strictGender &&
+      !isValidGenderMatch(newTeamA, newTeamB, event.genderBalanced)
+    ) {
+      return Number.POSITIVE_INFINITY;
     }
 
-    const ratingDiffA = Math.abs(a.currentRating - unavailablePlayer.currentRating);
-    const ratingDiffB = Math.abs(b.currentRating - unavailablePlayer.currentRating);
+    if (
+      event.genderBalanced &&
+      !strictGender &&
+      !isValidGenderMatch(newTeamA, newTeamB, event.genderBalanced)
+    ) {
+      score += 40;
+    }
 
-    return ratingDiffA - ratingDiffB;
-  });
+    score += Math.random() * 2;
 
-  return validCandidates[0];
+    return score;
+  };
+
+  let sortedCandidates = [...baseCandidates].sort(
+    (a, b) => getCandidateScore(a, true) - getCandidateScore(b, true)
+  );
+
+  if (getCandidateScore(sortedCandidates[0], true) !== Number.POSITIVE_INFINITY) {
+    return sortedCandidates[0];
+  }
+
+  sortedCandidates = [...baseCandidates].sort(
+    (a, b) => getCandidateScore(a, false) - getCandidateScore(b, false)
+  );
+
+  return sortedCandidates[0];
 }

@@ -1,6 +1,10 @@
 import { v4 as uuidv4 } from "uuid";
 import { events } from "../data/memoryStore.js";
-import { createMatches, findReplacementPlayer } from "./matchMakingService.js";
+import {
+  createMatches,
+  findReplacementPlayer,
+  regenerateSingleMatch,
+} from "./matchMakingService.js";
 import { updateRatingsAfterMatch } from "./ratingService.js";
 
 const RATING_VALUES = {
@@ -28,6 +32,10 @@ export function createEvent(data) {
 
   events.push(event);
   return event;
+}
+
+export function getAllEvents() {
+  return events;
 }
 
 export function getEvent(eventId) {
@@ -66,6 +74,10 @@ export function updatePlayerAvailability(eventId, playerId, isAvailable) {
   const player = event.players.find((p) => p.id === playerId);
   if (!player) return null;
 
+  if (player.isCurrentlyPlaying) {
+    return null;
+  }
+
   player.isAvailable = Boolean(isAvailable);
 
   return player;
@@ -77,7 +89,20 @@ export function generateRound(eventId, mode = "current") {
 
   const matches = createMatches(event, mode);
 
+  if (matches.length === 0) {
+    return {
+      round: event.currentRound,
+      matches: [],
+      message: "No matches generated.",
+    };
+  }
+
   event.currentRound += 1;
+
+  matches.forEach((match) => {
+    match.round = event.currentRound;
+  });
+
   event.matches.push(...matches);
 
   return {
@@ -86,20 +111,37 @@ export function generateRound(eventId, mode = "current") {
   };
 }
 
+export function regenerateMatch(eventId, matchId) {
+  const event = getEvent(eventId);
+  if (!event) return null;
+
+  const matchIndex = event.matches.findIndex((m) => m.id === matchId);
+  if (matchIndex === -1) return null;
+
+  const oldMatch = event.matches[matchIndex];
+
+  if (!["generated", "queued"].includes(oldMatch.status)) {
+    return null;
+  }
+
+  const newMatch = regenerateSingleMatch(event, oldMatch);
+
+  if (!newMatch) return null;
+
+  event.matches[matchIndex] = newMatch;
+
+  return newMatch;
+}
+
 export function replacePlayerInMatch(eventId, matchId, unavailablePlayerId) {
   const event = getEvent(eventId);
   if (!event) return null;
 
   const match = event.matches.find((m) => m.id === matchId);
-  if (!match || match.status !== "generated") return null;
 
-  const unavailablePlayer = event.players.find(
-    (p) => p.id === unavailablePlayerId
-  );
-
-  if (!unavailablePlayer) return null;
-
-  unavailablePlayer.isAvailable = false;
+  if (!match || !["generated", "queued"].includes(match.status)) {
+    return null;
+  }
 
   const replacement = findReplacementPlayer(event, match, unavailablePlayerId);
 
@@ -122,7 +164,9 @@ export function startMatch(eventId, matchId) {
 
   const match = event.matches.find((m) => m.id === matchId);
 
-  if (!match || !["generated", "queued"].includes(match.status)) return null;
+  if (!match || !["generated", "queued"].includes(match.status)) {
+    return null;
+  }
 
   const players = [...match.teamA, ...match.teamB];
 
@@ -140,10 +184,6 @@ export function startMatch(eventId, matchId) {
   match.startedAt = new Date().toISOString();
 
   return match;
-}
-
-export function getAllEvents() {
-  return events;
 }
 
 export function endMatch(eventId, matchId, data) {

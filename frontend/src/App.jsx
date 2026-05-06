@@ -126,6 +126,15 @@ function App() {
     }
   };
 
+  const regenerateMatch = async (matchId) => {
+    try {
+      await api.patch(`/events/${event.id}/matches/${matchId}/regenerate`);
+      await refreshEvent();
+    } catch (error) {
+      alert("Could not regenerate this matchup.");
+    }
+  };
+
   const startMatch = async (matchId) => {
     try {
       await api.patch(`/events/${event.id}/matches/${matchId}/start`);
@@ -458,6 +467,7 @@ function App() {
                 <MatchCard
                   match={match}
                   replacePlayer={replacePlayer}
+                  regenerateMatch={regenerateMatch}
                   startMatch={startMatch}
                   openEndMatchModal={openEndMatchModal}
                 />
@@ -477,6 +487,7 @@ function App() {
                 <MatchCard
                   match={match}
                   replacePlayer={replacePlayer}
+                  regenerateMatch={regenerateMatch}
                   startMatch={startMatch}
                   openEndMatchModal={openEndMatchModal}
                 />
@@ -502,6 +513,7 @@ function App() {
                     <MatchCard
                       match={match}
                       replacePlayer={replacePlayer}
+                      regenerateMatch={regenerateMatch}
                       startMatch={startMatch}
                       openEndMatchModal={openEndMatchModal}
                     />
@@ -604,6 +616,7 @@ function App() {
 function MatchCard({
   match,
   replacePlayer,
+  regenerateMatch,
   startMatch,
   openEndMatchModal,
 }) {
@@ -663,6 +676,14 @@ function MatchCard({
       </div>
 
       <div className="card-footer">
+        {(match.status === "generated" || match.status === "queued") && (
+          <button
+            className="btn btn-outline-secondary w-100 mb-2"
+            onClick={() => regenerateMatch(match.id)}
+          >
+            Regenerate Matchup
+          </button>
+        )}
         {(match.status === "generated" || match.status === "queued") && (
           <button
             className="btn btn-primary w-100"

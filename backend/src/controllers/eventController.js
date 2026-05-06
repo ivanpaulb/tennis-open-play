@@ -57,6 +57,21 @@ export function generateRound(req, res) {
   res.json(result);
 }
 
+export function regenerateMatch(req, res) {
+  const result = eventService.regenerateMatch(
+    req.params.eventId,
+    req.params.matchId
+  );
+
+  if (!result) {
+    return res.status(400).json({
+      message: "Could not regenerate matchup.",
+    });
+  }
+
+  res.json(result);
+}
+
 export function replacePlayerInMatch(req, res) {
   const result = eventService.replacePlayerInMatch(
     req.params.eventId,
