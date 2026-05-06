@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from "uuid";
 import { events } from "../data/memoryStore.js";
-import { createMatches, findReplacementPlayer } from "./matchmakingService.js";
+import { createMatches, findReplacementPlayer } from "./matchMakingService.js";
 import { updateRatingsAfterMatch } from "./ratingService.js";
 
 const RATING_VALUES = {
